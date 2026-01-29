@@ -1,10 +1,8 @@
 {
   "/page": "app/page.js",
-  "/auth/page": "app/auth/page.js",
-  "/_not-found/page": "app/_not-found/page.js",
-  "/admin/page": "app/admin/page.js",
-  "/add-product/page": "app/add-product/page.js",
-  "/[username]/[slug]/page": "app/[username]/[slug]/page.js",
   "/profile/page": "app/profile/page.js",
-  "/services/[slug]/page": "app/services/[slug]/page.js"
+  "/services/[slug]/page": "app/services/[slug]/page.js",
+  "/admin/page": "app/admin/page.js",
+  "/auth/page": "app/auth/page.js",
+  "/[username]/[slug]/page": "app/[username]/[slug]/page.js"
 }

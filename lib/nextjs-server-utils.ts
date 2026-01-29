@@ -1,5 +1,5 @@
 import { createClient } from '@supabase/supabase-js';
-import { Product } from '../types';
+import { Product, UserProfile } from '../types';
 
 // NOTE: In a real Next.js App Router project, you should use:
 // import { createClient } from '@/utils/supabase/server';
@@ -20,21 +20,10 @@ const supabase = createClient(supabaseUrl, supabaseKey);
  */
 export async function getProductBySlug(username: string, slug: string): Promise<Product | null> {
   try {
-    // FIX: Removed !inner to ensure product is found even if profile relation is tricky
-    // FIX: Removed 'rating' from select to avoid error if column missing in DB
     const { data, error } = await supabase
       .from('products')
       .select(`
-        id,
-        seller_id,
-        name,
-        slug,
-        description,
-        price,
-        image_url,
-        file_url,
-        category,
-        created_at,
+        *,
         seller:profiles(username, full_name, avatar_url)
       `)
       .eq('slug', slug)
@@ -48,27 +37,28 @@ export async function getProductBySlug(username: string, slug: string): Promise<
 
     if (!data) return null;
 
-    // Inject default rating (5.0) because we removed it from select
-    const product = { 
-        ...data, 
-        rating: (data as any).rating || 5.0 
-    } as Product;
-    
+    // FIX: Supabase to-one relations can be returned as an array.
+    // We destructure and grab the first element to ensure it's an object.
+    const { seller: sellerData, ...rest } = data;
+    const sellerProfile = Array.isArray(sellerData) ? sellerData[0] : sellerData;
+
+    // Construct the final product object, conforming to the `Product` type.
+    const product: Product = {
+      ...rest,
+      seller: sellerProfile as Pick<UserProfile, 'username' | 'full_name' | 'avatar_url'> | null,
+      // Inject default rating if it's null or missing.
+      rating: data.rating || 5.0, 
+    };
+
     // Manual Verification - Case Insensitive Check
-    // If username is provided in URL, it must match the seller's username (case-insensitive)
     if (product.seller && product.seller.username) {
-        if (product.seller.username.toLowerCase() !== username.toLowerCase()) {
-            console.warn(`Username mismatch: URL=${username}, DB=${product.seller.username}`);
-            // If strictly mismatching valid usernames, return null.
-            // But if URL uses 'user' generic and DB has real name, maybe allow?
-            // For now, strict check to prevent impersonation URLs.
-            return null;
-        }
-    }
-    
-    // If product has no seller attached (orphan) but URL asks for specific user, fail safe.
-    if (!product.seller && username !== 'unknown') {
-        return null; 
+      if (product.seller.username.toLowerCase() !== username.toLowerCase()) {
+        console.warn(`Username mismatch: URL=${username}, DB=${product.seller.username}`);
+        return null;
+      }
+    } else {
+      // If the product has no seller but the URL specifies one, it's a mismatch.
+      return null;
     }
 
     return product;

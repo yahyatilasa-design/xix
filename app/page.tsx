@@ -1,15 +1,15 @@
 'use client';
 
-import React, { useState, useEffect } from 'react';
+import React, { useState, useEffect, useCallback } from 'react';
 import { useRouter } from 'next/navigation';
 import { TRANSLATIONS } from '../constants';
-import { UserProfile as UserProfileType, Wallet, Language, Transaction, CurrencyCode, UserRole, ServiceItem, Product } from '../types';
+import { UserProfile as UserProfileType, Wallet, Language, Transaction, CurrencyCode, UserRole, Product } from '../types';
 import Hero from '../components/Hero';
 import ServiceGrid from '../components/ServiceGrid';
 import Marketplace from '../components/Marketplace';
 import AICore from '../components/AICore';
 import LanguageToggle from '../components/LanguageToggle';
-import { Bell, User, Loader2, LogOut, Globe, Shield, PlusCircle } from 'lucide-react';
+import { User, Loader2, LogOut, Globe, Shield, PlusCircle, Boxes, AlertTriangle } from 'lucide-react';
 import { supabase } from '../services/supabaseClient';
 import { getUserWallet, getUserTransactions, getUserProfile } from '../services/dbService';
 import { getTopProducts } from '../services/productService';
@@ -22,56 +22,68 @@ export default function Dashboard() {
   const [currency, setCurrency] = useState<CurrencyCode>('IDR');
   const [rates, setRates] = useState<Partial<Record<CurrencyCode, number>>>({ IDR: 1 });
   
-  // Data State
   const [wallet, setWallet] = useState<Wallet>({ balance: 0, currency: 'IDR' });
   const [transactions, setTransactions] = useState<Transaction[]>([]);
   const [user, setUser] = useState<UserProfileType | null>(null);
-  const [products, setProducts] = useState<Product[]>([]); // State for Top Products
+  const [products, setProducts] = useState<Product[]>([]);
   const [isLoading, setIsLoading] = useState(true);
+  const [error, setError] = useState<string | null>(null); // New state for handling errors
 
   const t = TRANSLATIONS[lang];
 
+  const loadUserData = useCallback(async (userId: string, authUser: any) => {
+    setIsLoading(true);
+    setError(null); // Reset error state on new data load attempt
+    try {
+      const [fetchedWallet, fetchedTransactions, fetchedProfile, fetchedProducts] = await Promise.all([
+        getUserWallet(userId),
+        getUserTransactions(userId),
+        getUserProfile(userId),
+        getTopProducts(),
+      ]);
+
+      const appRole = authUser.app_metadata?.role?.toLowerCase();
+      const dbRole = (fetchedProfile as any).role?.toLowerCase();
+      let finalRole: UserRole = 'user';
+      if (appRole === 'admin' || dbRole === 'admin') finalRole = 'admin';
+      else if (appRole === 'seller' || dbRole === 'seller') finalRole = 'seller';
+
+      const fullUser: UserProfileType = {
+        id: userId,
+        email: authUser.email || '',
+        username: authUser.user_metadata?.username || null,
+        full_name: authUser.user_metadata?.full_name || 'User',
+        avatar_url: authUser.user_metadata?.avatar_url,
+        ...(fetchedProfile as UserProfileType),
+        role: finalRole,
+      };
+
+      setUser(fullUser);
+      setWallet(fetchedWallet);
+      setTransactions(fetchedTransactions || []);
+      setProducts(fetchedProducts || []);
+    } catch (e) {
+      console.error("Fatal error loading user data:", e);
+      setError('Gagal memuat data pengguna. Silakan muat ulang halaman.'); // Set a user-friendly error message
+    } finally {
+      setIsLoading(false);
+    }
+  }, []);
+
   useEffect(() => {
     let isMounted = true;
-
-    // 1. Load Exchange Rates Independently (Non-blocking)
-    fetchExchangeRates().then((fetchedRates) => {
-      if (isMounted) setRates(fetchedRates);
+    fetchExchangeRates().then(rates => {
+      if(isMounted) setRates(rates)
     }).catch(console.warn);
 
-    // 2. Single Source of Truth for Auth & Data Loading
     const { data: { subscription } } = supabase.auth.onAuthStateChange(async (event, session) => {
       if (!isMounted) return;
-      
-      console.log(`[Auth Event] ${event}`);
 
-      // Handle Logout or No Session
-      if (event === 'SIGNED_OUT' || !session) {
-        if (isMounted) {
-           setUser(null);
-           setIsLoading(true); // Keep loading true while redirecting to prevent flash
-           router.replace('/auth');
-        }
-        return;
-      }
-
-      // Handle Token Refresh (Skip data reload to prevent stutter)
-      if (event === 'TOKEN_REFRESHED') {
-        return;
-      }
-
-      // Handle Initial Session or Sign In
-      if (event === 'INITIAL_SESSION' || event === 'SIGNED_IN') {
-        try {
-           // Only show loading if we haven't loaded data yet to prevent UI flashes on re-focus
-           if (!user) setIsLoading(true);
-           
-           await loadUserData(session.user.id, session.user);
-        } catch (error) {
-           console.error("Critical error loading user data:", error);
-        } finally {
-           if (isMounted) setIsLoading(false);
-        }
+      if (session) {
+        await loadUserData(session.user.id, session.user);
+      } else {
+        setIsLoading(false);
+        router.replace('/auth');
       }
     });
 
@@ -79,68 +91,46 @@ export default function Dashboard() {
       isMounted = false;
       subscription.unsubscribe();
     };
-  }, [router]); // Removed 'user' from dependencies to prevent infinite loops
-
-  const loadUserData = async (userId: string, authUser: any) => {
-    const appRole = authUser.app_metadata?.role?.toLowerCase();
-    
-    const baseUser: UserProfileType = {
-        id: userId,
-        email: authUser.email || '',
-        username: authUser.user_metadata?.username || null,
-        full_name: authUser.user_metadata?.full_name || 'User',
-        avatar_url: authUser.user_metadata?.avatar_url,
-        role: (appRole || 'user') as UserRole 
-    };
-
-    try {
-        // Fetch all Dashboard data in parallel
-        const [fetchedWallet, fetchedTransactions, fetchedProfile, fetchedProducts] = await Promise.all([
-            getUserWallet(userId),
-            getUserTransactions(userId),
-            getUserProfile(userId),
-            getTopProducts() 
-        ]);
-
-        const dbRole = fetchedProfile.role?.toLowerCase();
-        let finalRole: UserRole = 'user';
-        if (appRole === 'admin' || dbRole === 'admin') finalRole = 'admin';
-        else if (appRole === 'seller' || dbRole === 'seller') finalRole = 'seller';
-
-        setUser({ ...baseUser, ...fetchedProfile, role: finalRole });
-        setWallet(fetchedWallet);
-        setTransactions(fetchedTransactions || []);
-        setProducts(fetchedProducts || []);
-    } catch (e) {
-        console.warn("Using fallback user data due to fetch error", e);
-        // Ensure user is at least set so we don't get stuck, but keep partial data
-        setUser(baseUser);
-    }
-  };
+  }, [loadUserData, router]);
 
   const handleLogout = async () => {
-    setIsLoading(true); // Show loader during sign out
     await supabase.auth.signOut();
-    router.replace('/auth');
   };
 
-  const handleServiceClick = (service: ServiceItem) => {
-    router.push(`/services/${service.nameKey}`);
+  const formatDate = (dateString: string) => {
+    if (!dateString) return 'Date unavailable';
+    const date = new Date(dateString);
+    if (isNaN(date.getTime())) return 'Invalid date';
+    return date.toLocaleDateString('id-ID', { day: 'numeric', month: 'long', year: 'numeric' });
   };
 
-  const handleProductClick = (product: Product) => {
-    const sellerName = product.seller?.username || 'user';
-    // Use router.push for client-side navigation instead of window.location.href
-    router.push(`/${sellerName}/${product.slug}`);
-  };
-
-  if (isLoading || !user) {
+  if (isLoading) {
     return (
       <div className="min-h-screen bg-zinc-950 flex flex-col items-center justify-center text-emerald-500 gap-2">
         <Loader2 size={32} className="animate-spin" />
         <span className="text-zinc-500 text-sm font-mono animate-pulse">Initializing XIX...</span>
       </div>
     );
+  }
+
+  if (error) {
+    return (
+      <div className="min-h-screen bg-zinc-950 flex flex-col items-center justify-center text-red-500 gap-3 p-4 text-center">
+        <AlertTriangle size={40} />
+        <h2 className="text-lg font-bold text-zinc-200">Terjadi Kesalahan</h2>
+        <p className="text-sm text-zinc-400">{error}</p>
+        <button 
+          onClick={() => window.location.reload()} 
+          className="mt-4 px-4 py-2 bg-emerald-600 text-white text-sm font-semibold rounded-lg hover:bg-emerald-700 transition-colors"
+        >
+          Muat Ulang
+        </button>
+      </div>
+    );
+  }
+
+  if (!user) {
+    return null;
   }
 
   const displayedBalance = formatCurrency(wallet.balance, currency, rates);
@@ -167,12 +157,17 @@ export default function Dashboard() {
           </div>
 
           <div className="flex items-center gap-4">
-             {/* Action Buttons */}
              {(user.role === 'admin' || user.role === 'seller') && (
-               <Link href="/add-product" className="flex items-center gap-1.5 px-3 py-1.5 rounded-full text-xs font-medium border bg-zinc-900 border-zinc-800 text-zinc-400 hover:text-white transition-colors">
-                 <PlusCircle size={14} />
-                 <span className="hidden sm:inline">Add Product</span>
-               </Link>
+                <div className="flex items-center gap-2">
+                    <Link href="/dashboard/products" className="flex items-center gap-1.5 px-3 py-1.5 rounded-full text-xs font-medium border bg-zinc-900 border-zinc-800 text-zinc-400 hover:text-white transition-colors">
+                        <Boxes size={14} />
+                        <span className="hidden sm:inline">Manage</span>
+                    </Link>
+                    <Link href="/add-product" className="flex items-center gap-1.5 px-3 py-1.5 rounded-full text-xs font-medium border bg-emerald-500/10 border-emerald-500/50 text-emerald-400 hover:text-emerald-300 transition-colors">
+                        <PlusCircle size={14} />
+                        <span className="hidden sm:inline">Add</span>
+                    </Link>
+                </div>
              )}
 
              {user.role === 'admin' && (
@@ -182,7 +177,6 @@ export default function Dashboard() {
                </Link>
              )}
 
-             {/* Currency Dropdown */}
              <div className="relative group hidden sm:block">
                 <div className="flex items-center gap-1 cursor-pointer text-zinc-400 hover:text-white">
                     <Globe size={16} />
@@ -213,19 +207,17 @@ export default function Dashboard() {
 
       <main className="max-w-4xl mx-auto pt-4">
         <Hero displayedBalance={displayedBalance} labels={{ balance: t.balance, add_funds: t.add_funds, send_money: t.send_money }} />
-        <ServiceGrid translations={t.services} onServiceClick={handleServiceClick} />
+        <ServiceGrid translations={t.services} onServiceClick={(service) => router.push(`/services/${service.nameKey}`)} />
         
-        {/* Real Data Marketplace */}
         <Marketplace 
             title={t.top_sellers} 
-            currency={currency} 
-            rates={rates} 
+            currency={currency}
+            rates={rates}
             products={products}
             seeAllHref="/search" 
-            onProductClick={handleProductClick}
+            onProductClick={(product) => router.push(`/${product.seller?.username || 'user'}/${product.slug}`)}
         />
         
-        {/* Transactions */}
         <div className="px-6 mt-8">
             <h2 className="text-lg font-semibold text-white mb-4">{t.recent_transactions}</h2>
             <div className="space-y-3">
@@ -234,7 +226,7 @@ export default function Dashboard() {
                         <div key={tx.id} className="bg-zinc-900/50 border border-zinc-800/50 rounded-xl p-4 flex justify-between items-center">
                             <div>
                                 <p className="font-medium text-sm text-zinc-200">{tx.description}</p>
-                                <p className="text-xs text-zinc-500 mt-1">{tx.date}</p>
+                                <p className="text-xs text-zinc-500 mt-1">{formatDate(tx.created_at)}</p>
                             </div>
                             <div className={`text-sm font-mono font-medium ${tx.type === 'topup' ? 'text-emerald-500' : 'text-zinc-300'}`}>
                                 {tx.type === 'topup' ? '+' : '-'} {formatCurrency(tx.amount, currency, rates)}

@@ -1,30 +1,25 @@
 'use client';
 
-import React, { useEffect, useState } from 'react';
+import React, { useEffect } from 'react';
 import { AuthPage } from '../../components/AuthPage';
-import { supabase } from '../../services/supabaseClient';
+import { supabase } from '../../services/supabaseClient'; // This now uses the CORRECT client
 import { useRouter } from 'next/navigation';
-import { Loader2 } from 'lucide-react';
 
 export default function AuthRoute() {
   const router = useRouter();
-  const [isRedirecting, setIsRedirecting] = useState(false);
 
   useEffect(() => {
-    // 1. Check current session immediately
-    const checkSession = async () => {
-      const { data } = await supabase.auth.getSession();
-      if (data.session) {
-        setIsRedirecting(true);
+    // This listener handles the redirection AFTER a successful sign-in.
+    const { data: { subscription } } = supabase.auth.onAuthStateChange((event, session) => {
+      if (event === 'SIGNED_IN') {
         router.push('/');
       }
-    };
-    checkSession();
+    });
 
-    // 2. Listen for auth changes (e.g. user just logged in via AuthPage)
-    const { data: { subscription } } = supabase.auth.onAuthStateChange((_event, session) => {
+    // On mount, also check if a session already exists (e.g., user is already logged in).
+    // If so, redirect them away from the auth page.
+    supabase.auth.getSession().then(({ data: { session } }) => {
       if (session) {
-        setIsRedirecting(true);
         router.push('/');
       }
     });
@@ -33,15 +28,6 @@ export default function AuthRoute() {
       subscription.unsubscribe();
     };
   }, [router]);
-
-  // Show loader while redirecting to prevent "stuck" feeling
-  if (isRedirecting) {
-    return (
-      <div className="min-h-screen bg-zinc-950 flex items-center justify-center">
-        <Loader2 className="animate-spin text-emerald-500" size={32} />
-      </div>
-    );
-  }
 
   return <AuthPage />;
 }

@@ -48,6 +48,7 @@ export type Database = {
           rating: number | null
           seller_id: string
           slug: string
+          status: string
         }
         Insert: {
           category?: string | null
@@ -61,6 +62,7 @@ export type Database = {
           rating?: number | null
           seller_id: string
           slug: string
+          status?: string
         }
         Update: {
           category?: string | null
@@ -74,6 +76,7 @@ export type Database = {
           rating?: number | null
           seller_id?: string
           slug?: string
+          status?: string
         }
         Relationships: [
           {
