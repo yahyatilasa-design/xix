@@ -15,10 +15,10 @@ if (!supabaseUrl || !supabaseKey) {
 const supabase = createClient(supabaseUrl, supabaseKey);
 
 /**
- * Server Function: Fetch product by slug including seller profile
- * Usage: await getProductBySlug('some-seller', 'my-product-slug');
+ * Server Function: Fetch product by slug including seller profile.
+ * DEFINITIVE FIX: This function now correctly handles URLs that contain either the seller's username OR their UUID (seller_id).
  */
-export async function getProductBySlug(username: string, slug: string): Promise<Product | null> {
+export async function getProductBySlug(sellerIdentifier: string, slug: string): Promise<Product | null> {
   try {
     const { data, error } = await supabase
       .from('products')
@@ -30,41 +30,39 @@ export async function getProductBySlug(username: string, slug: string): Promise<
       .single();
 
     if (error) {
-      if (error.code === 'PGRST116') return null; // Not found
-      console.error("Supabase Error:", error);
+      if (error.code === 'PGRST116') return null; // Standard case for "Not Found"
+      console.error("Supabase Error fetching product:", error);
       throw error;
     }
 
     if (!data) return null;
 
-    // FIX: Supabase to-one relations can be returned as an array.
-    // We destructure and grab the first element to ensure it's an object.
+    const sellerIdFromDb = data.seller_id;
+    const sellerUsernameFromDb = (Array.isArray(data.seller) ? data.seller[0]?.username : data.seller?.username) || null;
+
+    // Verification Logic: The identifier from the URL could be a username or a UUID (seller_id).
+    // We must check if the identifier matches either the product's actual seller_id or the seller's username.
+    const identifierIsId = sellerIdentifier.toLowerCase() === sellerIdFromDb?.toLowerCase();
+    const identifierIsUsername = sellerUsernameFromDb ? sellerIdentifier.toLowerCase() === sellerUsernameFromDb.toLowerCase() : false;
+
+    if (!identifierIsId && !identifierIsUsername) {
+      console.warn(`Seller mismatch on product page: URL Identifier='${sellerIdentifier}', DB Username='${sellerUsernameFromDb}', DB ID='${sellerIdFromDb}'`);
+      return null; // The product exists, but not for this seller identifier.
+    }
+    
     const { seller: sellerData, ...rest } = data;
     const sellerProfile = Array.isArray(sellerData) ? sellerData[0] : sellerData;
 
-    // Construct the final product object, conforming to the `Product` type.
     const product: Product = {
       ...rest,
       seller: sellerProfile as Pick<UserProfile, 'username' | 'full_name' | 'avatar_url'> | null,
-      // Inject default rating if it's null or missing.
       rating: data.rating || 5.0, 
     };
-
-    // Manual Verification - Case Insensitive Check
-    if (product.seller && product.seller.username) {
-      if (product.seller.username.toLowerCase() !== username.toLowerCase()) {
-        console.warn(`Username mismatch: URL=${username}, DB=${product.seller.username}`);
-        return null;
-      }
-    } else {
-      // If the product has no seller but the URL specifies one, it's a mismatch.
-      return null;
-    }
 
     return product;
     
   } catch (error) {
-    console.error("Server Error fetching product by slug:", error);
+    console.error("Server Error in getProductBySlug:", error);
     return null;
   }
 }

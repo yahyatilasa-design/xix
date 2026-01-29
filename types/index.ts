@@ -25,9 +25,11 @@ export type Transaction = Omit<DbTransaction, 'user_id'> & {
     // Add any other custom fields for Transaction if needed in the future
 };
 
+// DEFINITIVE FIX: Aligning Wallet type with the database schema.
+// The database allows balance and currency to be null, so the type must reflect this.
 export type Wallet = {
-    balance: number;
-    currency: CurrencyCode;
+    balance: number | null;
+    currency: CurrencyCode | null;
 };
 
 export type ServiceItem = {

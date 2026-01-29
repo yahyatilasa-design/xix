@@ -98,9 +98,10 @@ export const uploadProduct = async ({
 };
 
 /**
- * Fetches top/recent products from the database.
- * Uses LEFT JOIN (removed !inner) so products appear even if seller profile is incomplete or RLS restricted.
- * FIX: Removed 'rating' from select to avoid error if column missing.
+ * DEFINITIVE FIX: Removing the join on `profiles`.
+ * This was causing the infinite loading screen on the main page due to an RLS policy conflict.
+ * The user does not have permission to view all other seller profiles, causing the query to hang.
+ * The seller object will now be null in the returned data, which will be handled in the UI.
  */
 export const getTopProducts = async (): Promise<Product[]> => {
   try {
@@ -116,8 +117,7 @@ export const getTopProducts = async (): Promise<Product[]> => {
         image_url,
         file_url,
         category,
-        created_at,
-        seller:profiles(username, full_name, avatar_url)
+        created_at
       `)
       .order('created_at', { ascending: false })
       .limit(10);
@@ -131,12 +131,11 @@ export const getTopProducts = async (): Promise<Product[]> => {
       return [];
     }
 
-    // Map data to ensure safety
+    // The `seller` property is now missing. We will add a null placeholder.
     const products = data.map((item: any) => ({
       ...item,
-      rating: item.rating || 5.0, // Default to 5.0 since column is missing
-      // Fallback if seller is null (due to left join)
-      seller: item.seller || { username: 'unknown', full_name: 'Unknown Seller', avatar_url: null }
+      seller: null, // Explicitly set seller to null
+      rating: item.rating || 5.0, // Default to 5.0 if rating is missing
     })) as Product[];
 
     return products;

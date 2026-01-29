@@ -22,18 +22,18 @@ export default function Dashboard() {
   const [currency, setCurrency] = useState<CurrencyCode>('IDR');
   const [rates, setRates] = useState<Partial<Record<CurrencyCode, number>>>({ IDR: 1 });
   
-  const [wallet, setWallet] = useState<Wallet>({ balance: 0, currency: 'IDR' });
+  const [wallet, setWallet] = useState<Wallet>({ balance: null, currency: null });
   const [transactions, setTransactions] = useState<Transaction[]>([]);
   const [user, setUser] = useState<UserProfileType | null>(null);
   const [products, setProducts] = useState<Product[]>([]);
   const [isLoading, setIsLoading] = useState(true);
-  const [error, setError] = useState<string | null>(null); // New state for handling errors
+  const [error, setError] = useState<string | null>(null);
 
   const t = TRANSLATIONS[lang];
 
   const loadUserData = useCallback(async (userId: string, authUser: any) => {
     setIsLoading(true);
-    setError(null); // Reset error state on new data load attempt
+    setError(null);
     try {
       const [fetchedWallet, fetchedTransactions, fetchedProfile, fetchedProducts] = await Promise.all([
         getUserWallet(userId),
@@ -64,28 +64,40 @@ export default function Dashboard() {
       setProducts(fetchedProducts || []);
     } catch (e) {
       console.error("Fatal error loading user data:", e);
-      setError('Gagal memuat data pengguna. Silakan muat ulang halaman.'); // Set a user-friendly error message
+      setError('Gagal memuat data pengguna. Silakan muat ulang halaman.');
     } finally {
       setIsLoading(false);
     }
   }, []);
 
+  // DEFINITIVE FIX: Proactively check the session on every component mount.
+  // This fixes the infinite loading screen when navigating back from a server-rendered page.
   useEffect(() => {
     let isMounted = true;
-    fetchExchangeRates().then(rates => {
-      if(isMounted) setRates(rates)
-    }).catch(console.warn);
 
-    const { data: { subscription } } = supabase.auth.onAuthStateChange(async (event, session) => {
-      if (!isMounted) return;
+    // Proactively check session on every mount
+    supabase.auth.getSession().then(({ data: { session } }) => {
+      if (isMounted) {
+        if (session) {
+          loadUserData(session.user.id, session.user);
+        } else {
+          setIsLoading(false);
+          router.replace('/auth');
+        }
+      }
+    });
 
-      if (session) {
-        await loadUserData(session.user.id, session.user);
-      } else {
-        setIsLoading(false);
+    // Also listen for auth state changes for logout/login in other tabs
+    const { data: { subscription } } = supabase.auth.onAuthStateChange((_event, session) => {
+      if (!session && isMounted) {
         router.replace('/auth');
       }
     });
+
+    // Fetch currency rates
+    fetchExchangeRates().then(rates => {
+      if(isMounted) setRates(rates);
+    }).catch(console.warn);
 
     return () => {
       isMounted = false;
@@ -104,7 +116,12 @@ export default function Dashboard() {
     return date.toLocaleDateString('id-ID', { day: 'numeric', month: 'long', year: 'numeric' });
   };
 
-  if (isLoading) {
+  const handleProductClick = (product: Product) => {
+    const sellerIdentifier = product.seller?.username || product.seller_id;
+    router.push(`/${sellerIdentifier}/${product.slug}`);
+  };
+
+  if (isLoading && !user) {
     return (
       <div className="min-h-screen bg-zinc-950 flex flex-col items-center justify-center text-emerald-500 gap-2">
         <Loader2 size={32} className="animate-spin" />
@@ -133,7 +150,9 @@ export default function Dashboard() {
     return null;
   }
 
-  const displayedBalance = formatCurrency(wallet.balance, currency, rates);
+  const safeBalance = wallet?.balance ?? 0;
+  const safeCurrency = wallet?.currency ?? 'IDR';
+  const displayedBalance = formatCurrency(safeBalance, currency, rates);
   const safeTransactions = Array.isArray(transactions) ? transactions : [];
 
   return (
@@ -215,7 +234,7 @@ export default function Dashboard() {
             rates={rates}
             products={products}
             seeAllHref="/search" 
-            onProductClick={(product) => router.push(`/${product.seller?.username || 'user'}/${product.slug}`)}
+            onProductClick={handleProductClick}
         />
         
         <div className="px-6 mt-8">
@@ -240,7 +259,7 @@ export default function Dashboard() {
         </div>
       </main>
 
-      <AICore wallet={wallet} transactions={safeTransactions} labels={{ ask: t.ask_ai, greeting: t.ai_greeting }} />
+      <AICore wallet={{ balance: safeBalance, currency: safeCurrency }} transactions={safeTransactions} labels={{ ask: t.ask_ai, greeting: t.ai_greeting }} />
     </div>
   );
 }

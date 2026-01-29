@@ -1,6 +1,6 @@
 'use client';
 
-import React, { useEffect, useState } from 'react';
+import React, { useEffect, useState, useCallback } from 'react';
 import UserProfile from '../../components/UserProfile';
 import { supabase } from '../../services/supabaseClient';
 import { getUserProfile } from '../../services/dbService';
@@ -12,7 +12,7 @@ export default function ProfilePage() {
   const router = useRouter();
   const [user, setUser] = useState<UserProfileType | null>(null);
 
-  const loadUser = async () => {
+  const loadUser = useCallback(async () => {
       const { data: { user: authUser } } = await supabase.auth.getUser();
       if (!authUser) {
           router.push('/auth');
@@ -22,7 +22,6 @@ export default function ProfilePage() {
       const profile = await getUserProfile(authUser.id);
       const appRole = authUser.app_metadata?.role?.toLowerCase();
       
-      // Merge Auth data with DB data
       setUser({
           id: authUser.id,
           email: authUser.email || '',
@@ -32,11 +31,20 @@ export default function ProfilePage() {
           phone_number: profile.phone_number,
           avatar_url: profile.avatar_url,
       });
-  };
+  }, [router]);
 
   useEffect(() => {
     loadUser();
-  }, []);
+  }, [loadUser]);
+
+  // DEFINITIVE FIX: This function now accepts the updated data and merges it into the existing state,
+  // preventing the infinite re-render loop by not triggering a full reload.
+  const handleProfileUpdate = (updatedData: Partial<UserProfileType>) => {
+      setUser(currentUser => {
+          if (!currentUser) return null;
+          return { ...currentUser, ...updatedData };
+      });
+  };
 
   if (!user) return <div className="h-screen bg-zinc-950 flex items-center justify-center text-emerald-500"><Loader2 className="animate-spin" /></div>;
 
@@ -45,7 +53,7 @@ export default function ProfilePage() {
         <UserProfile 
             user={user} 
             onBack={() => router.push('/')} 
-            onUpdate={loadUser} 
+            onUpdate={handleProfileUpdate} // Pass the new, safe update handler
         />
     </div>
   );
