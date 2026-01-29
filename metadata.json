@@ -1,0 +1,7 @@
+{
+  "name": "XIX - Digital Marketplace",
+  "description": "A premium dark-themed digital marketplace and PPOB platform powered by AI.",
+  "requestFramePermissions": [
+    "microphone"
+  ]
+}
